@@ -17,10 +17,19 @@ import okhttp3.ResponseBody
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
+/** Режим отправки: обычный или сравнение (без ограничений vs с ограничениями) */
+enum class SendMode { NORMAL, COMPARISON }
+
 data class ChatUiState(
     val isLoading: Boolean = false,
     val response: String = "",
-    val error: String? = null
+    val error: String? = null,
+    /** Результат сравнения: ответ без ограничений */
+    val responseUnrestricted: String? = null,
+    /** Результат сравнения: ответ с ограничениями */
+    val responseRestricted: String? = null,
+    /** Идёт ли режим сравнения (ждём оба ответа) */
+    val comparisonInProgress: Boolean = false
 )
 
 class ChatViewModel : ViewModel() {
@@ -29,114 +38,191 @@ class ChatViewModel : ViewModel() {
     
     private val gson = Gson()
 
-    fun sendMessage(userMessage: String) {
+    private val formatInstruction = """
+        Отвечай кратко. Максимум 2–3 предложения.
+        Формат ответа: только текст, без заголовков и списков.
+        Завершай ответ маркером ---
+    """.trimIndent()
+
+    fun sendMessage(userMessage: String, mode: SendMode = SendMode.NORMAL) {
         if (userMessage.isBlank()) return
 
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
-                isLoading = true,
-                error = null,
-                response = ""
-            )
-
-            try {
-                val request = ChatRequest(
-                    messages = listOf(
-                        Message(role = "user", content = userMessage)
-                    ),
-                    stream = true
-                )
-
-                val response = ApiClient.deepSeekApi.chatCompletionStream(
-                    authorization = ApiClient.getAuthHeader(),
-                    request = request
-                )
-
-                if (response.isSuccessful && response.body() != null) {
-                    processStreamingResponse(response.body()!!)
-                } else {
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        error = "Ошибка: ${response.code()} - ${response.message()}"
-                    )
-                }
-            } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    error = "Ошибка: ${e.message}"
-                )
+            when (mode) {
+                SendMode.NORMAL -> sendSingle(userMessage, withRestrictions = false)
+                SendMode.COMPARISON -> sendComparison(userMessage)
             }
         }
     }
+
+    private suspend fun sendSingle(userMessage: String, withRestrictions: Boolean) {
+        _uiState.value = _uiState.value.copy(
+            isLoading = true,
+            error = null,
+            response = "",
+            responseUnrestricted = null,
+            responseRestricted = null
+        )
+
+        try {
+            val request = buildRequest(userMessage, withRestrictions)
+            val response = ApiClient.deepSeekApi.chatCompletionStream(
+                authorization = ApiClient.getAuthHeader(),
+                request = request
+            )
+            if (response.isSuccessful && response.body() != null) {
+                processStreamingResponse(response.body()!!)
+                _uiState.value = _uiState.value.copy(isLoading = false)
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = "Ошибка: ${response.code()} - ${response.message()}"
+                )
+            }
+        } catch (e: Exception) {
+            _uiState.value = _uiState.value.copy(
+                isLoading = false,
+                error = "Ошибка: ${e.message}"
+            )
+        }
+    }
+
+    private suspend fun sendComparison(userMessage: String) {
+        _uiState.value = _uiState.value.copy(
+            isLoading = false,
+            response = "",
+            error = null,
+            responseUnrestricted = null,
+            responseRestricted = null,
+            comparisonInProgress = true
+        )
+
+        // 1. Запрос БЕЗ ограничений
+        try {
+            val reqUnrestricted = buildRequest(userMessage, withRestrictions = false)
+            val resp = ApiClient.deepSeekApi.chatCompletionStream(
+                authorization = ApiClient.getAuthHeader(),
+                request = reqUnrestricted
+            )
+            if (resp.isSuccessful && resp.body() != null) {
+                val text = processStreamingResponseToText(resp.body()!!)
+                _uiState.value = _uiState.value.copy(responseUnrestricted = text)
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    responseUnrestricted = "Ошибка: ${resp.code()}",
+                    comparisonInProgress = false
+                )
+                return
+            }
+        } catch (e: Exception) {
+            _uiState.value = _uiState.value.copy(
+                responseUnrestricted = "Ошибка: ${e.message}",
+                comparisonInProgress = false
+            )
+            return
+        }
+
+        // 2. Запрос С ограничениями
+        try {
+            val reqRestricted = buildRequest(userMessage, withRestrictions = true)
+            val resp = ApiClient.deepSeekApi.chatCompletionStream(
+                authorization = ApiClient.getAuthHeader(),
+                request = reqRestricted
+            )
+            if (resp.isSuccessful && resp.body() != null) {
+                val text = processStreamingResponseToText(resp.body()!!)
+                _uiState.value = _uiState.value.copy(
+                    responseRestricted = text,
+                    comparisonInProgress = false
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    responseRestricted = "Ошибка: ${resp.code()}",
+                    comparisonInProgress = false
+                )
+            }
+        } catch (e: Exception) {
+            _uiState.value = _uiState.value.copy(
+                responseRestricted = "Ошибка: ${e.message}",
+                comparisonInProgress = false
+            )
+        }
+    }
+
+    private fun buildRequest(userMessage: String, withRestrictions: Boolean): ChatRequest {
+        val messages = if (withRestrictions) {
+            listOf(
+                Message(role = "system", content = formatInstruction),
+                Message(role = "user", content = userMessage)
+            )
+        } else {
+            listOf(Message(role = "user", content = userMessage))
+        }
+
+        return ChatRequest(
+            messages = messages,
+            stream = true,
+            maxTokens = if (withRestrictions) 150 else null,
+            stop = if (withRestrictions) listOf("---") else null
+        )
+    }
     
-    private suspend fun processStreamingResponse(responseBody: ResponseBody) {
+    /** Обрабатывает поток и обновляет UI по мере поступления. Используется в обычном режиме. */
+    private suspend fun processStreamingResponse(responseBody: ResponseBody): String {
         var accumulatedText = ""
-        
         try {
             withContext(Dispatchers.IO) {
                 val reader = BufferedReader(InputStreamReader(responseBody.byteStream(), "UTF-8"))
                 var line: String?
-                
                 while (reader.readLine().also { line = it } != null) {
-                    if (line.isNullOrBlank()) continue
-                    
-                    // Server-Sent Events format: "data: {...}"
-                    if (line!!.startsWith("data: ")) {
-                        val jsonData = line.substring(6).trim() // Remove "data: " prefix
-                        
-                        // Check for [DONE] marker
-                        if (jsonData == "[DONE]") {
-                            break
-                        }
-                        
-                        if (jsonData.isNotEmpty()) {
-                            try {
-                                val jsonObject = gson.fromJson(jsonData, JsonObject::class.java)
-                                val choices = jsonObject.getAsJsonArray("choices")
-                                
-                                if (choices != null && choices.size() > 0) {
-                                    val choice = choices[0].asJsonObject
-                                    val delta = choice.getAsJsonObject("delta")
-                                    
-                                    if (delta != null && delta.has("content") && !delta.get("content").isJsonNull) {
-                                        val content = delta.get("content").asString
-                                        if (content.isNotEmpty()) {
-                                            accumulatedText += content
-                                            
-                                            // Update UI with accumulated text (StateFlow is thread-safe)
-                                            withContext(Dispatchers.Main) {
-                                                _uiState.value = _uiState.value.copy(
-                                                    isLoading = true,
-                                                    response = accumulatedText
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                // Skip malformed JSON lines
-                                continue
-                            }
+                    val content = parseSseLine(line)
+                    if (content != null) {
+                        accumulatedText += content
+                        withContext(Dispatchers.Main) {
+                            _uiState.value = _uiState.value.copy(isLoading = true, response = accumulatedText)
                         }
                     }
                 }
-                
                 reader.close()
             }
-            
-            // Mark as complete
-            _uiState.value = _uiState.value.copy(
-                isLoading = false,
-                response = accumulatedText
-            )
-        } catch (e: Exception) {
-            _uiState.value = _uiState.value.copy(
-                isLoading = false,
-                error = "Ошибка обработки потока: ${e.message}"
-            )
         } finally {
             responseBody.close()
         }
+        return accumulatedText
+    }
+
+    /** Обрабатывает поток и возвращает полный текст. Для режима сравнения (без обновления UI). */
+    private suspend fun processStreamingResponseToText(responseBody: ResponseBody): String {
+        var accumulatedText = ""
+        try {
+            withContext(Dispatchers.IO) {
+                val reader = BufferedReader(InputStreamReader(responseBody.byteStream(), "UTF-8"))
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    val content = parseSseLine(line)
+                    if (content != null) accumulatedText += content
+                }
+                reader.close()
+            }
+        } finally {
+            responseBody.close()
+        }
+        return accumulatedText
+    }
+
+    private fun parseSseLine(line: String?): String? {
+        if (line.isNullOrBlank() || !line.startsWith("data: ")) return null
+        val jsonData = line.substring(6).trim()
+        if (jsonData == "[DONE]") return null
+        if (jsonData.isEmpty()) return null
+        return try {
+            val jsonObject = gson.fromJson(jsonData, JsonObject::class.java)
+            val choices = jsonObject.getAsJsonArray("choices") ?: return null
+            if (choices.size() == 0) return null
+            val delta = choices[0].asJsonObject.getAsJsonObject("delta") ?: return null
+            if (!delta.has("content") || delta.get("content").isJsonNull) return null
+            delta.get("content").asString
+        } catch (e: Exception) { null }
     }
 }
 

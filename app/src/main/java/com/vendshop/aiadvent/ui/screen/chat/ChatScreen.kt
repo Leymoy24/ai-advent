@@ -1,6 +1,7 @@
 package com.vendshop.aiadvent.ui.screen.chat
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -59,7 +60,46 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
             modifier = Modifier.padding(bottom = 32.dp)
         )
 
+        val isBusy = uiState.isLoading || uiState.comparisonInProgress
+
         // Область ответа
+        when {
+            uiState.responseUnrestricted != null || uiState.responseRestricted != null -> {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (uiState.responseUnrestricted != null) {
+                        ResponseCard(
+                            title = "Без ограничений",
+                            text = uiState.responseUnrestricted!!,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (uiState.responseRestricted != null) {
+                        ResponseCard(
+                            title = "С ограничениями (формат, max_tokens=150, stop=\"---\")",
+                            text = uiState.responseRestricted!!,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (uiState.comparisonInProgress) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.large,
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.size(12.dp))
+                                Text("Загружаем второй ответ...", style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
+            }
+            else -> {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -115,7 +155,7 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                             }
                         }
                     }
-                    uiState.isLoading -> {
+                    isBusy -> {
                         CircularProgressIndicator(
                             modifier = Modifier.align(Alignment.Center),
                             color = MaterialTheme.colorScheme.primary
@@ -133,26 +173,24 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                 }
             }
         }
+            }
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Поле ввода и кнопка
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        // Поле ввода и кнопки
+        Column(modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
                 value = userInput,
                 onValueChange = { userInput = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { 
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = {
                     Text(
                         text = "Введите ваш запрос...",
                         style = MaterialTheme.typography.bodyLarge
-                    ) 
+                    )
                 },
-                enabled = !uiState.isLoading,
+                enabled = !isBusy,
                 shape = MaterialTheme.shapes.medium,
                 maxLines = 3,
                 colors = OutlinedTextFieldDefaults.colors(
@@ -162,28 +200,70 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                 textStyle = MaterialTheme.typography.bodyLarge
             )
 
-            Button(
-                onClick = {
-                    viewModel.sendMessage(userInput)
-                    userInput = ""
-                },
-                enabled = !uiState.isLoading && userInput.isNotBlank(),
-                modifier = Modifier.height(56.dp),
-                shape = MaterialTheme.shapes.medium
+            Spacer(Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (uiState.isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp
-                    )
-                } else {
-                    Text(
-                        text = "Отправить",
-                        style = MaterialTheme.typography.labelLarge
-                    )
+                Button(
+                    onClick = {
+                        viewModel.sendMessage(userInput, SendMode.NORMAL)
+                        userInput = ""
+                    },
+                    enabled = !isBusy && userInput.isNotBlank(),
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    if (uiState.isLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                    } else {
+                        Text("Отправить", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+                Button(
+                    onClick = {
+                        viewModel.sendMessage(userInput, SendMode.COMPARISON)
+                        userInput = ""
+                    },
+                    enabled = !isBusy && userInput.isNotBlank(),
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    if (uiState.comparisonInProgress) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                    } else {
+                        Text("Сравнить", style = MaterialTheme.typography.labelLarge)
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ResponseCard(title: String, text: String, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Text(
+                text = text.ifEmpty { "(пустой ответ)" },
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp).verticalScroll(rememberScrollState()),
+                lineHeight = 22.sp
+            )
         }
     }
 }
