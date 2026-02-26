@@ -194,7 +194,7 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
             }
         }
 
-        // Нижняя часть: закруглённая карточка с полем ввода (анимированный «дым» 2 dp)
+        // Нижняя часть: поле ввода
         Row(
             modifier = Modifier
                 .fillMaxWidth()
