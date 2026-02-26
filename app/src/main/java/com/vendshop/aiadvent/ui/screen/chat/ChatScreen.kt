@@ -21,9 +21,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.outlined.QuestionAnswer
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,12 +52,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.vendshop.aiadvent.data.model.ModelOptions
 
 @Composable
 fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
     var userInput by remember { mutableStateOf("") }
+    var modelMenuExpanded by remember { mutableStateOf(false) }
     val uiState by viewModel.uiState.collectAsState()
-    val isBusy = uiState.isLoading || uiState.comparisonInProgress
+    val isBusy = uiState.isLoading || uiState.comparisonInProgress || uiState.modelComparisonInProgress
 
     Column(
         modifier = Modifier
@@ -62,6 +67,41 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
+        // Верхняя панель с выбором модели (кнопка в правом верхнем углу)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            contentAlignment = Alignment.TopEnd
+        ) {
+            IconButton(onClick = { modelMenuExpanded = true }) {
+                Icon(
+                    imageVector = Icons.Outlined.Tune,
+                    contentDescription = "Выбор модели",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            DropdownMenu(
+                expanded = modelMenuExpanded,
+                onDismissRequest = { modelMenuExpanded = false }
+            ) {
+                ModelOptions.all.forEach { option ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = option.displayName,
+                                fontWeight = if (option == uiState.selectedModel) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        onClick = {
+                            viewModel.selectModel(option)
+                            modelMenuExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+
         // Верхняя часть: область ответа на весь экран (не перекрывая карточку ввода)
         Box(
             modifier = Modifier
@@ -72,6 +112,7 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
             val hasResponse = uiState.response.isNotEmpty() ||
                     uiState.responseUnrestricted != null ||
                     uiState.responseRestricted != null ||
+                    uiState.modelComparisonResults != null ||
                     uiState.error != null ||
                     isBusy
 
@@ -101,7 +142,8 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                 LaunchedEffect(
                     uiState.response,
                     uiState.responseUnrestricted,
-                    uiState.responseRestricted
+                    uiState.responseRestricted,
+                    uiState.modelComparisonResults
                 ) {
                     scrollState.animateScrollTo(scrollState.maxValue)
                 }
@@ -130,6 +172,46 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                                 color = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.fillMaxWidth()
                             )
+                        }
+
+                        uiState.modelComparisonResults != null -> {
+                            uiState.modelComparisonResults!!.forEach { result ->
+                                ModelComparisonCard(
+                                    result = result,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                            // Краткий вывод и ссылки
+                            if (!uiState.modelComparisonInProgress) {
+                                ComparisonSummaryCard(
+                                    results = uiState.modelComparisonResults!!,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                            if (uiState.modelComparisonInProgress) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = MaterialTheme.shapes.large,
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainer
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(16.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.size(12.dp))
+                                        Text(
+                                            "Сравниваем 2 модели...",
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         uiState.responseUnrestricted != null || uiState.responseRestricted != null -> {
@@ -223,21 +305,127 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                 textStyle = MaterialTheme.typography.bodyLarge,
                 trailingIcon = {
                     if (userInput.isNotBlank()) {
-                        IconButton(
-                            onClick = {
-                                viewModel.sendMessage(userInput, SendMode.NORMAL)
-                                userInput = ""
-                            },
-                            enabled = !isBusy
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Send,
-                                contentDescription = "Отправить",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = {
+                                    viewModel.sendMessage(userInput, SendMode.MODEL_COMPARISON)
+                                    userInput = ""
+                                },
+                                enabled = !isBusy
+                            ) {
+                                Text(
+                                    text = "2×",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    viewModel.sendMessage(userInput, SendMode.NORMAL)
+                                    userInput = ""
+                                },
+                                enabled = !isBusy
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Send,
+                                    contentDescription = "Отправить",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                     }
                 }
+            )
+        }
+    }
+}
+
+private val DEEPSEEK_DOCS_URL = "https://api-docs.deepseek.com"
+private val DEEPSEEK_PRICING_URL = "https://api-docs.deepseek.com/quick_start/pricing"
+
+@Composable
+fun ComparisonSummaryCard(
+    results: List<ModelComparisonResult>,
+    modifier: Modifier = Modifier
+) {
+    val fastest = results.minByOrNull { it.elapsedMs }
+    val cheapest = results.minByOrNull { it.costUsd }
+    val summary = buildString {
+        appendLine("Вывод:")
+        if (results.none { it.error != null }) {
+            fastest?.let { appendLine("• Самая быстрая: ${it.modelOption.displayName} (${it.elapsedMs} мс)") }
+            cheapest?.let { appendLine("• Самая дешёвая: ${it.modelOption.displayName} ($${"%.6f".format(it.costUsd)})") }
+            appendLine("• deepseek-chat — быстрый, прямой ответ.")
+            appendLine("• deepseek-reasoner — рассуждения, точнее на сложных задачах.")
+        }
+        appendLine()
+        appendLine("Ссылки:")
+        appendLine("• API Docs: $DEEPSEEK_DOCS_URL")
+        appendLine("• Pricing: $DEEPSEEK_PRICING_URL")
+    }
+    Card(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Сравнение моделей",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth(),
+                lineHeight = 20.sp
+            )
+        }
+    }
+}
+
+@Composable
+fun ModelComparisonCard(result: ModelComparisonResult, modifier: Modifier = Modifier) {
+    val text = if (result.error != null) "Ошибка: ${result.error}" else result.response
+    val metrics = buildString {
+        append("⏱ ${result.elapsedMs} мс")
+        append(" • ")
+        append("📊 ${result.promptTokens + result.completionTokens} токенов")
+        append(" • ")
+        append("💰 $%.6f".format(result.costUsd))
+    }
+    Card(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = result.modelOption.displayName,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            Text(
+                text = metrics,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Text(
+                text = text.ifEmpty { "(пустой ответ)" },
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.fillMaxWidth(),
+                lineHeight = 22.sp
             )
         }
     }
@@ -264,10 +452,7 @@ fun ResponseCard(title: String, text: String, modifier: Modifier = Modifier) {
             Text(
                 text = text.ifEmpty { "(пустой ответ)" },
                 style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 400.dp)
-                    .verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 lineHeight = 22.sp
             )
         }

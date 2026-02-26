@@ -2,14 +2,21 @@ package com.vendshop.aiadvent.data.api
 
 import com.vendshop.aiadvent.data.model.ChatRequest
 import com.vendshop.aiadvent.data.model.ChatResponse
+import com.vendshop.aiadvent.data.model.ModelsListResponse
 import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
+import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Streaming
 
 interface DeepSeekApi {
+    @GET("v1/models")
+    suspend fun listModels(
+        @Header("Authorization") authorization: String
+    ): Response<ModelsListResponse>
+
     @POST("v1/chat/completions")
     suspend fun chatCompletion(
         @Header("Authorization") authorization: String,

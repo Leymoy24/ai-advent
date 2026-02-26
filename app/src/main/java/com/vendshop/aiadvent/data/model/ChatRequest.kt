@@ -29,12 +29,12 @@ data class ChatResponse(
 
 data class Choice(
     val message: Message,
-    val finishReason: String?
+    @SerializedName("finish_reason") val finishReason: String?
 )
 
 data class Usage(
-    val promptTokens: Int,
-    val completionTokens: Int,
-    val totalTokens: Int
+    @SerializedName("prompt_tokens") val promptTokens: Int = 0,
+    @SerializedName("completion_tokens") val completionTokens: Int = 0,
+    @SerializedName("total_tokens") val totalTokens: Int = 0
 )
 

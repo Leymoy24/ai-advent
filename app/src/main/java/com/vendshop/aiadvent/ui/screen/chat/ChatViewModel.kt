@@ -7,7 +7,12 @@ import com.google.gson.JsonObject
 import com.vendshop.aiadvent.data.api.ApiClient
 import com.vendshop.aiadvent.data.model.ChatRequest
 import com.vendshop.aiadvent.data.model.Message
+import com.vendshop.aiadvent.data.model.ModelOption
+import com.vendshop.aiadvent.data.model.ModelOptions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,21 +22,35 @@ import okhttp3.ResponseBody
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
-/** Режим отправки: обычный или сравнение (без ограничений vs с ограничениями) */
-enum class SendMode { NORMAL, COMPARISON }
+/** Режим отправки: обычный, сравнение ограничений или сравнение 2 моделей */
+enum class SendMode { NORMAL, COMPARISON, MODEL_COMPARISON }
+
+/** Результат одного запроса к модели при сравнении */
+data class ModelComparisonResult(
+    val modelOption: ModelOption,
+    val response: String,
+    val elapsedMs: Long,
+    val promptTokens: Int,
+    val completionTokens: Int,
+    val costUsd: Double,
+    val error: String? = null
+)
 
 data class ChatUiState(
     val isLoading: Boolean = false,
     val response: String = "",
     val error: String? = null,
-    /** Последний вопрос пользователя (отображается заголовком) */
     val lastUserQuestion: String = "",
-    /** Результат сравнения: ответ без ограничений */
     val responseUnrestricted: String? = null,
-    /** Результат сравнения: ответ с ограничениями */
     val responseRestricted: String? = null,
-    /** Идёт ли режим сравнения (ждём оба ответа) */
-    val comparisonInProgress: Boolean = false
+    val comparisonInProgress: Boolean = false,
+    /** Выбранная модель для обычного чата */
+    val selectedModel: ModelOption = ModelOptions.all.first(),
+    /** Результаты сравнения 2 моделей */
+    val modelComparisonResults: List<ModelComparisonResult>? = null,
+    val modelComparisonInProgress: Boolean = false,
+    /** ID моделей, полученные через API list при старте */
+    val availableModelIds: List<String> = emptyList()
 )
 
 class ChatViewModel : ViewModel() {
@@ -40,35 +59,57 @@ class ChatViewModel : ViewModel() {
     
     private val gson = Gson()
 
+    init {
+        viewModelScope.launch { loadModelsList() }
+    }
+
+    private suspend fun loadModelsList() {
+        try {
+            val response = ApiClient.deepSeekApi.listModels(
+                authorization = ApiClient.getAuthHeader()
+            )
+            if (response.isSuccessful && response.body() != null) {
+                val models = response.body()!!.data
+                _uiState.value = _uiState.value.copy(availableModelIds = models.map { it.id })
+            }
+        } catch (_: Exception) { /* игнорируем ошибки при старте */ }
+    }
+
     private val formatInstruction = """
         Отвечай кратко. Максимум 2–3 предложения.
         Формат ответа: только текст, без заголовков и списков.
         Завершай ответ маркером ---
     """.trimIndent()
 
+    fun selectModel(model: ModelOption) {
+        _uiState.value = _uiState.value.copy(selectedModel = model)
+    }
+
     fun sendMessage(userMessage: String, mode: SendMode = SendMode.NORMAL) {
         if (userMessage.isBlank()) return
 
         viewModelScope.launch {
             when (mode) {
-                SendMode.NORMAL -> sendSingle(userMessage, withRestrictions = false)
+                SendMode.NORMAL -> sendSingle(userMessage, _uiState.value.selectedModel)
                 SendMode.COMPARISON -> sendComparison(userMessage)
+                SendMode.MODEL_COMPARISON -> sendModelComparison(userMessage)
             }
         }
     }
 
-    private suspend fun sendSingle(userMessage: String, withRestrictions: Boolean) {
+    private suspend fun sendSingle(userMessage: String, modelOption: ModelOption) {
         _uiState.value = _uiState.value.copy(
             isLoading = true,
             error = null,
             response = "",
             lastUserQuestion = userMessage,
             responseUnrestricted = null,
-            responseRestricted = null
+            responseRestricted = null,
+            modelComparisonResults = null
         )
 
         try {
-            val request = buildRequest(userMessage, withRestrictions)
+            val request = buildRequest(userMessage, modelOption)
             val response = ApiClient.deepSeekApi.chatCompletionStream(
                 authorization = ApiClient.getAuthHeader(),
                 request = request
@@ -86,6 +127,81 @@ class ChatViewModel : ViewModel() {
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
                 error = "Ошибка: ${e.message}"
+            )
+        }
+    }
+
+    private suspend fun sendModelComparison(userMessage: String) {
+        _uiState.value = _uiState.value.copy(
+            isLoading = false,
+            response = "",
+            error = null,
+            lastUserQuestion = userMessage,
+            responseUnrestricted = null,
+            responseRestricted = null,
+            modelComparisonResults = null,
+            modelComparisonInProgress = true
+        )
+
+        val results = coroutineScope {
+            ModelOptions.all.map { modelOption ->
+                async { runSingleModelRequest(userMessage, modelOption) }
+            }.awaitAll()
+        }
+
+        _uiState.value = _uiState.value.copy(
+            modelComparisonResults = results,
+            modelComparisonInProgress = false
+        )
+    }
+
+    private suspend fun runSingleModelRequest(userMessage: String, modelOption: ModelOption): ModelComparisonResult {
+        val startMs = System.currentTimeMillis()
+        val request = buildRequest(userMessage, modelOption, stream = false)
+
+        return try {
+            val response = ApiClient.deepSeekApi.chatCompletion(
+                authorization = ApiClient.getAuthHeader(),
+                request = request
+            )
+            val elapsedMs = System.currentTimeMillis() - startMs
+
+            if (response.isSuccessful && response.body() != null) {
+                val body = response.body()!!
+                val text = body.choices.firstOrNull()?.message?.content ?: ""
+                val usage = body.usage
+                val promptTokens = usage?.promptTokens ?: 0
+                val completionTokens = usage?.completionTokens ?: 0
+                val cost = ModelOptions.calculateCost(promptTokens, completionTokens)
+                ModelComparisonResult(
+                    modelOption = modelOption,
+                    response = text,
+                    elapsedMs = elapsedMs,
+                    promptTokens = promptTokens,
+                    completionTokens = completionTokens,
+                    costUsd = cost
+                )
+            } else {
+                ModelComparisonResult(
+                    modelOption = modelOption,
+                    response = "",
+                    elapsedMs = elapsedMs,
+                    promptTokens = 0,
+                    completionTokens = 0,
+                    costUsd = 0.0,
+                    error = "Ошибка: ${response.code()}"
+                )
+            }
+        } catch (e: Exception) {
+            val elapsedMs = System.currentTimeMillis() - startMs
+            ModelComparisonResult(
+                modelOption = modelOption,
+                response = "",
+                elapsedMs = elapsedMs,
+                promptTokens = 0,
+                completionTokens = 0,
+                costUsd = 0.0,
+                error = e.message ?: "Ошибка"
             )
         }
     }
@@ -153,6 +269,18 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    private fun buildRequest(
+        userMessage: String,
+        modelOption: ModelOption,
+        stream: Boolean = true
+    ): ChatRequest = ChatRequest(
+        model = modelOption.id,
+        messages = listOf(Message(role = "user", content = userMessage)),
+        stream = stream,
+        maxTokens = modelOption.maxTokens,
+        temperature = modelOption.temperature
+    )
+
     private fun buildRequest(userMessage: String, withRestrictions: Boolean): ChatRequest {
         val messages = if (withRestrictions) {
             listOf(
@@ -164,6 +292,7 @@ class ChatViewModel : ViewModel() {
         }
 
         return ChatRequest(
+            model = "deepseek-chat",
             messages = messages,
             stream = true,
             maxTokens = if (withRestrictions) 150 else null,
