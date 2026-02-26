@@ -264,10 +264,7 @@ fun ResponseCard(title: String, text: String, modifier: Modifier = Modifier) {
             Text(
                 text = text.ifEmpty { "(пустой ответ)" },
                 style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 400.dp)
-                    .verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 lineHeight = 22.sp
             )
         }
