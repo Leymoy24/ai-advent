@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.outlined.QuestionAnswer
+import androidx.compose.material.icons.outlined.Thermostat
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,7 +55,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
     var userInput by remember { mutableStateOf("") }
     val uiState by viewModel.uiState.collectAsState()
-    val isBusy = uiState.isLoading || uiState.comparisonInProgress
+    val isBusy = uiState.isLoading || uiState.comparisonInProgress || uiState.temperatureComparisonInProgress
 
     Column(
         modifier = Modifier
@@ -72,6 +73,9 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
             val hasResponse = uiState.response.isNotEmpty() ||
                     uiState.responseUnrestricted != null ||
                     uiState.responseRestricted != null ||
+                    uiState.responseTemp0 != null ||
+                    uiState.responseTemp07 != null ||
+                    uiState.responseTemp12 != null ||
                     uiState.error != null ||
                     isBusy
 
@@ -101,7 +105,10 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                 LaunchedEffect(
                     uiState.response,
                     uiState.responseUnrestricted,
-                    uiState.responseRestricted
+                    uiState.responseRestricted,
+                    uiState.responseTemp0,
+                    uiState.responseTemp07,
+                    uiState.responseTemp12
                 ) {
                     scrollState.animateScrollTo(scrollState.maxValue)
                 }
@@ -130,6 +137,62 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                                 color = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.fillMaxWidth()
                             )
+                        }
+
+                        uiState.responseTemp0 != null || uiState.responseTemp07 != null || uiState.responseTemp12 != null -> {
+                            if (uiState.responseTemp0 != null) {
+                                ResponseCard(
+                                    title = "Temperature = 0 (точность)",
+                                    text = uiState.responseTemp0!!,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                            if (uiState.responseTemp07 != null) {
+                                ResponseCard(
+                                    title = "Temperature = 0.7 (баланс)",
+                                    text = uiState.responseTemp07!!,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                            if (uiState.responseTemp12 != null) {
+                                ResponseCard(
+                                    title = "Temperature = 1.2 (креативность)",
+                                    text = uiState.responseTemp12!!,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                            if (uiState.temperatureComparisonInProgress) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = MaterialTheme.shapes.large,
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainer
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(16.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.size(12.dp))
+                                        Text(
+                                            "Загружаем ответы с разной температурой...",
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    }
+                                }
+                            }
+                            if (!uiState.temperatureComparisonInProgress &&
+                                uiState.responseTemp0 != null &&
+                                uiState.responseTemp07 != null &&
+                                uiState.responseTemp12 != null) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                                TemperatureRecommendationsCard(modifier = Modifier.fillMaxWidth())
+                            }
                         }
 
                         uiState.responseUnrestricted != null || uiState.responseRestricted != null -> {
@@ -223,18 +286,36 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                 textStyle = MaterialTheme.typography.bodyLarge,
                 trailingIcon = {
                     if (userInput.isNotBlank()) {
-                        IconButton(
-                            onClick = {
-                                viewModel.sendMessage(userInput, SendMode.NORMAL)
-                                userInput = ""
-                            },
-                            enabled = !isBusy
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.End
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.Send,
-                                contentDescription = "Отправить",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
+                            IconButton(
+                                onClick = {
+                                    viewModel.sendMessage(userInput, SendMode.TEMPERATURE_COMPARISON)
+                                    userInput = ""
+                                },
+                                enabled = !isBusy
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Thermostat,
+                                    contentDescription = "Сравнить по temperature (0, 0.7, 1.2)",
+                                    tint = MaterialTheme.colorScheme.tertiary
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    viewModel.sendMessage(userInput, SendMode.NORMAL)
+                                    userInput = ""
+                                },
+                                enabled = !isBusy
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Send,
+                                    contentDescription = "Отправить",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                     }
                 }
@@ -264,11 +345,50 @@ fun ResponseCard(title: String, text: String, modifier: Modifier = Modifier) {
             Text(
                 text = text.ifEmpty { "(пустой ответ)" },
                 style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 400.dp)
-                    .verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 lineHeight = 22.sp
+            )
+        }
+    }
+}
+
+@Composable
+fun TemperatureRecommendationsCard(modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Для каких задач лучше подходит каждая настройка",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+            Text(
+                text = "• Temperature = 0: факты, даты, код, инструкции, чек-листы, тесты — когда нужна максимальная точность и повторяемость.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth(),
+                lineHeight = 20.sp
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "• Temperature = 0.7: обычный диалог, объяснения, идеи, советы — универсальный баланс точности и разнообразия.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth(),
+                lineHeight = 20.sp
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "• Temperature = 1.2: креативные тексты, мозговой штурм, слоганы, развлекательный контент — когда важна новизна и нестандартность.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth(),
+                lineHeight = 20.sp
             )
         }
     }

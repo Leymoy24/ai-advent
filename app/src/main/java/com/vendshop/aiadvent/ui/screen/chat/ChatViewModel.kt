@@ -17,8 +17,8 @@ import okhttp3.ResponseBody
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
-/** Режим отправки: обычный или сравнение (без ограничений vs с ограничениями) */
-enum class SendMode { NORMAL, COMPARISON }
+/** Режим отправки: обычный, сравнение ограничений или сравнение по temperature */
+enum class SendMode { NORMAL, COMPARISON, TEMPERATURE_COMPARISON }
 
 data class ChatUiState(
     val isLoading: Boolean = false,
@@ -31,7 +31,15 @@ data class ChatUiState(
     /** Результат сравнения: ответ с ограничениями */
     val responseRestricted: String? = null,
     /** Идёт ли режим сравнения (ждём оба ответа) */
-    val comparisonInProgress: Boolean = false
+    val comparisonInProgress: Boolean = false,
+    /** Сравнение по temperature: ответ при temperature=0 */
+    val responseTemp0: String? = null,
+    /** Сравнение по temperature: ответ при temperature=0.7 */
+    val responseTemp07: String? = null,
+    /** Сравнение по temperature: ответ при temperature=1.2 */
+    val responseTemp12: String? = null,
+    /** Идёт ли сравнение по temperature (ждём три ответа) */
+    val temperatureComparisonInProgress: Boolean = false
 )
 
 class ChatViewModel : ViewModel() {
@@ -53,6 +61,7 @@ class ChatViewModel : ViewModel() {
             when (mode) {
                 SendMode.NORMAL -> sendSingle(userMessage, withRestrictions = false)
                 SendMode.COMPARISON -> sendComparison(userMessage)
+                SendMode.TEMPERATURE_COMPARISON -> sendTemperatureComparison(userMessage)
             }
         }
     }
@@ -64,11 +73,14 @@ class ChatViewModel : ViewModel() {
             response = "",
             lastUserQuestion = userMessage,
             responseUnrestricted = null,
-            responseRestricted = null
+            responseRestricted = null,
+            responseTemp0 = null,
+            responseTemp07 = null,
+            responseTemp12 = null
         )
 
         try {
-            val request = buildRequest(userMessage, withRestrictions)
+            val request = buildRequest(userMessage, withRestrictions, temperature = 0.7)
             val response = ApiClient.deepSeekApi.chatCompletionStream(
                 authorization = ApiClient.getAuthHeader(),
                 request = request
@@ -98,12 +110,15 @@ class ChatViewModel : ViewModel() {
             lastUserQuestion = userMessage,
             responseUnrestricted = null,
             responseRestricted = null,
+            responseTemp0 = null,
+            responseTemp07 = null,
+            responseTemp12 = null,
             comparisonInProgress = true
         )
 
         // 1. Запрос БЕЗ ограничений
         try {
-            val reqUnrestricted = buildRequest(userMessage, withRestrictions = false)
+            val reqUnrestricted = buildRequest(userMessage, withRestrictions = false, temperature = 0.7)
             val resp = ApiClient.deepSeekApi.chatCompletionStream(
                 authorization = ApiClient.getAuthHeader(),
                 request = reqUnrestricted
@@ -128,7 +143,7 @@ class ChatViewModel : ViewModel() {
 
         // 2. Запрос С ограничениями
         try {
-            val reqRestricted = buildRequest(userMessage, withRestrictions = true)
+            val reqRestricted = buildRequest(userMessage, withRestrictions = true, temperature = 0.7)
             val resp = ApiClient.deepSeekApi.chatCompletionStream(
                 authorization = ApiClient.getAuthHeader(),
                 request = reqRestricted
@@ -153,7 +168,60 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    private fun buildRequest(userMessage: String, withRestrictions: Boolean): ChatRequest {
+    /** Отправляет один и тот же запрос с temperature 0, 0.7 и 1.2 для сравнения ответов. */
+    private suspend fun sendTemperatureComparison(userMessage: String) {
+        _uiState.value = _uiState.value.copy(
+            isLoading = false,
+            response = "",
+            error = null,
+            lastUserQuestion = userMessage,
+            responseUnrestricted = null,
+            responseRestricted = null,
+            responseTemp0 = null,
+            responseTemp07 = null,
+            responseTemp12 = null,
+            temperatureComparisonInProgress = true
+        )
+
+        val temps = listOf(0.0 to "responseTemp0", 0.7 to "responseTemp07", 1.2 to "responseTemp12")
+        for ((temp, key) in temps) {
+            try {
+                val req = buildRequest(userMessage, withRestrictions = false, temperature = temp)
+                val resp = ApiClient.deepSeekApi.chatCompletionStream(
+                    authorization = ApiClient.getAuthHeader(),
+                    request = req
+                )
+                if (resp.isSuccessful && resp.body() != null) {
+                    val text = processStreamingResponseToText(resp.body()!!)
+                    _uiState.value = when (key) {
+                        "responseTemp0" -> _uiState.value.copy(responseTemp0 = text)
+                        "responseTemp07" -> _uiState.value.copy(responseTemp07 = text)
+                        "responseTemp12" -> _uiState.value.copy(responseTemp12 = text)
+                        else -> _uiState.value
+                    }
+                } else {
+                    val err = "Ошибка: ${resp.code()}"
+                    _uiState.value = when (key) {
+                        "responseTemp0" -> _uiState.value.copy(responseTemp0 = err)
+                        "responseTemp07" -> _uiState.value.copy(responseTemp07 = err)
+                        "responseTemp12" -> _uiState.value.copy(responseTemp12 = err)
+                        else -> _uiState.value
+                    }
+                }
+            } catch (e: Exception) {
+                val err = "Ошибка: ${e.message}"
+                _uiState.value = when (key) {
+                    "responseTemp0" -> _uiState.value.copy(responseTemp0 = err)
+                    "responseTemp07" -> _uiState.value.copy(responseTemp07 = err)
+                    "responseTemp12" -> _uiState.value.copy(responseTemp12 = err)
+                    else -> _uiState.value
+                }
+            }
+        }
+        _uiState.value = _uiState.value.copy(temperatureComparisonInProgress = false)
+    }
+
+    private fun buildRequest(userMessage: String, withRestrictions: Boolean, temperature: Double = 0.7): ChatRequest {
         val messages = if (withRestrictions) {
             listOf(
                 Message(role = "system", content = formatInstruction),
@@ -165,6 +233,7 @@ class ChatViewModel : ViewModel() {
 
         return ChatRequest(
             messages = messages,
+            temperature = temperature,
             stream = true,
             maxTokens = if (withRestrictions) 150 else null,
             stop = if (withRestrictions) listOf("---") else null
