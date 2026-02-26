@@ -1,6 +1,5 @@
 package com.vendshop.aiadvent.ui.screen.chat
 
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,11 +8,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,11 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -44,7 +37,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,7 +46,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
     var userInput by remember { mutableStateOf("") }
     val uiState by viewModel.uiState.collectAsState()
-    val isBusy = uiState.isLoading || uiState.comparisonInProgress
+    val isBusy = uiState.isLoading || uiState.comparisonInProgress || uiState.fourWayInProgress
 
     Column(
         modifier = Modifier
@@ -72,6 +64,8 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
             val hasResponse = uiState.response.isNotEmpty() ||
                     uiState.responseUnrestricted != null ||
                     uiState.responseRestricted != null ||
+                    uiState.fourWayResult != null ||
+                    uiState.fourWayInProgress ||
                     uiState.error != null ||
                     isBusy
 
@@ -101,7 +95,8 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                 LaunchedEffect(
                     uiState.response,
                     uiState.responseUnrestricted,
-                    uiState.responseRestricted
+                    uiState.responseRestricted,
+                    uiState.fourWayResult
                 ) {
                     scrollState.animateScrollTo(scrollState.maxValue)
                 }
@@ -128,6 +123,67 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                                 text = "Ошибка: ${uiState.error}",
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        uiState.fourWayResult != null -> {
+                            val r = uiState.fourWayResult!!
+                            if (uiState.fourWayInProgress) {
+                                val stepLabel = when (uiState.fourWayStep) {
+                                    1 -> "Прямой ответ"
+                                    2 -> "Пошагово"
+                                    3 -> "Через промпт"
+                                    4 -> "Эксперты"
+                                    5 -> "Сравнение"
+                                    else -> "Запуск"
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.size(8.dp))
+                                    Text(
+                                        "Шаг ${uiState.fourWayStep}/5: $stepLabel",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            ResponseCard(
+                                title = "1. Прямой ответ",
+                                text = r.direct,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            ResponseCard(
+                                title = "2. С инструкцией «решай пошагово»",
+                                text = r.stepByStep,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            ResponseCard(
+                                title = "3. Через составленный промпт",
+                                text = r.viaMetaPrompt,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            ResponseCard(
+                                title = "4. Группа экспертов (аналитик, инженер, критик)",
+                                text = r.experts,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            ResponseCard(
+                                title = "Сравнение: отличаются ли ответы, какой способ точнее",
+                                text = r.comparison,
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
@@ -240,6 +296,30 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                 }
             )
         }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally)
+        ) {
+            TextButton(
+                onClick = {
+                    viewModel.sendMessage("", SendMode.FOUR_WAYS)
+                },
+                enabled = !isBusy && !uiState.fourWayInProgress
+            ) {
+                if (uiState.fourWayInProgress) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("4 способа рассуждения", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
     }
 }
 
@@ -264,10 +344,7 @@ fun ResponseCard(title: String, text: String, modifier: Modifier = Modifier) {
             Text(
                 text = text.ifEmpty { "(пустой ответ)" },
                 style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 400.dp)
-                    .verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 lineHeight = 22.sp
             )
         }
