@@ -24,6 +24,8 @@ data class ChatUiState(
     val isLoading: Boolean = false,
     val response: String = "",
     val error: String? = null,
+    /** Последний вопрос пользователя (отображается заголовком) */
+    val lastUserQuestion: String = "",
     /** Результат сравнения: ответ без ограничений */
     val responseUnrestricted: String? = null,
     /** Результат сравнения: ответ с ограничениями */
@@ -60,6 +62,7 @@ class ChatViewModel : ViewModel() {
             isLoading = true,
             error = null,
             response = "",
+            lastUserQuestion = userMessage,
             responseUnrestricted = null,
             responseRestricted = null
         )
@@ -92,6 +95,7 @@ class ChatViewModel : ViewModel() {
             isLoading = false,
             response = "",
             error = null,
+            lastUserQuestion = userMessage,
             responseUnrestricted = null,
             responseRestricted = null,
             comparisonInProgress = true

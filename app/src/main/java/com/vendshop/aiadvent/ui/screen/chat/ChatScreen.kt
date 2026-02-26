@@ -1,7 +1,7 @@
 package com.vendshop.aiadvent.ui.screen.chat
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,19 +9,32 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.outlined.QuestionAnswer
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -31,8 +44,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -41,110 +54,132 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
     var userInput by remember { mutableStateOf("") }
     val uiState by viewModel.uiState.collectAsState()
+    val isBusy = uiState.isLoading || uiState.comparisonInProgress
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .navigationBarsPadding()
     ) {
-        // Заголовок
-        Text(
-            text = "AI Advent - DeepSeek Chat",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 32.dp)
-        )
-
-        val isBusy = uiState.isLoading || uiState.comparisonInProgress
-
-        // Область ответа
-        when {
-            uiState.responseUnrestricted != null || uiState.responseRestricted != null -> {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (uiState.responseUnrestricted != null) {
-                        ResponseCard(
-                            title = "Без ограничений",
-                            text = uiState.responseUnrestricted!!,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                    if (uiState.responseRestricted != null) {
-                        ResponseCard(
-                            title = "С ограничениями (формат, max_tokens=150, stop=\"---\")",
-                            text = uiState.responseRestricted!!,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                    if (uiState.comparisonInProgress) {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = MaterialTheme.shapes.large,
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                                Spacer(modifier = Modifier.size(12.dp))
-                                Text("Загружаем второй ответ...", style = MaterialTheme.typography.bodyMedium)
-                            }
-                        }
-                    }
-                }
-            }
-            else -> {
-        Card(
+        // Верхняя часть: область ответа на весь экран (не перекрывая карточку ввода)
+        Box(
             modifier = Modifier
+                .weight(1f)
                 .fillMaxWidth()
-                .height(300.dp),
-            shape = MaterialTheme.shapes.large,
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                .padding(horizontal = 16.dp, vertical = 16.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(20.dp)
-            ) {
-                when {
-                    uiState.error != null -> {
+            val hasResponse = uiState.response.isNotEmpty() ||
+                    uiState.responseUnrestricted != null ||
+                    uiState.responseRestricted != null ||
+                    uiState.error != null ||
+                    isBusy
+
+            if (!hasResponse) {
+                // Пустое состояние: иконка и "Чем могу помочь?"
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.QuestionAnswer,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Чем могу помочь?",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                // Прокручиваемая область с ответом (и при сравнении — два блока)
+                val scrollState = rememberScrollState()
+                LaunchedEffect(
+                    uiState.response,
+                    uiState.responseUnrestricted,
+                    uiState.responseRestricted
+                ) {
+                    scrollState.animateScrollTo(scrollState.maxValue)
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scrollState)
+                ) {
+                    // Заголовок — вопрос пользователя
+                    if (uiState.lastUserQuestion.isNotEmpty()) {
                         Text(
-                            text = "Ошибка: ${uiState.error}",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.error,
+                            text = uiState.lastUserQuestion,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .verticalScroll(rememberScrollState())
+                                .padding(bottom = 12.dp)
                         )
                     }
-                    uiState.response.isNotEmpty() -> {
-                        val scrollState = rememberScrollState()
-                        
-                        // Auto-scroll to bottom when new text arrives
-                        LaunchedEffect(uiState.response) {
-                            scrollState.animateScrollTo(scrollState.maxValue)
+                    when {
+                        uiState.error != null -> {
+                            Text(
+                                text = "Ошибка: ${uiState.error}",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
-                        
-                        Column {
+
+                        uiState.responseUnrestricted != null || uiState.responseRestricted != null -> {
+                            if (uiState.responseUnrestricted != null) {
+                                ResponseCard(
+                                    title = "Без ограничений",
+                                    text = uiState.responseUnrestricted!!,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                            if (uiState.responseRestricted != null) {
+                                ResponseCard(
+                                    title = "С ограничениями (формат, max_tokens=150, stop=\"---\")",
+                                    text = uiState.responseRestricted!!,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                            if (uiState.comparisonInProgress) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = MaterialTheme.shapes.large,
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainer
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(16.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.size(12.dp))
+                                        Text(
+                                            "Загружаем второй ответ...",
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        else -> {
                             Text(
                                 text = uiState.response,
                                 style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .verticalScroll(scrollState),
+                                modifier = Modifier.fillMaxWidth(),
                                 lineHeight = 24.sp
                             )
-                            
-                            // Show loading indicator at the end if still loading
                             if (uiState.isLoading) {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 CircularProgressIndicator(
@@ -155,35 +190,21 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                             }
                         }
                     }
-                    isBusy -> {
-                        CircularProgressIndicator(
-                            modifier = Modifier.align(Alignment.Center),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    else -> {
-                        Text(
-                            text = "Введите ваш запрос ниже...",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
-                    }
                 }
             }
         }
-            }
-        }
 
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Поле ввода и кнопки
-        Column(modifier = Modifier.fillMaxWidth()) {
+        // Нижняя часть: закруглённая карточка с полем ввода (анимированный «дым» 2 dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             OutlinedTextField(
                 value = userInput,
                 onValueChange = { userInput = it },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.weight(1f),
                 placeholder = {
                     Text(
                         text = "Введите ваш запрос...",
@@ -191,63 +212,45 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                     )
                 },
                 enabled = !isBusy,
-                shape = MaterialTheme.shapes.medium,
+                shape = RoundedCornerShape(20.dp),
                 maxLines = 3,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                    focusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
                 ),
-                textStyle = MaterialTheme.typography.bodyLarge
+                textStyle = MaterialTheme.typography.bodyLarge,
+                trailingIcon = {
+                    if (userInput.isNotBlank()) {
+                        IconButton(
+                            onClick = {
+                                viewModel.sendMessage(userInput, SendMode.NORMAL)
+                                userInput = ""
+                            },
+                            enabled = !isBusy
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Send,
+                                contentDescription = "Отправить",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
             )
-
-            Spacer(Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Button(
-                    onClick = {
-                        viewModel.sendMessage(userInput, SendMode.NORMAL)
-                        userInput = ""
-                    },
-                    enabled = !isBusy && userInput.isNotBlank(),
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    if (uiState.isLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                    } else {
-                        Text("Отправить", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-                Button(
-                    onClick = {
-                        viewModel.sendMessage(userInput, SendMode.COMPARISON)
-                        userInput = ""
-                    },
-                    enabled = !isBusy && userInput.isNotBlank(),
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    if (uiState.comparisonInProgress) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                    } else {
-                        Text("Сравнить", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-            }
         }
     }
 }
 
 @Composable
-private fun ResponseCard(title: String, text: String, modifier: Modifier = Modifier) {
+fun ResponseCard(title: String, text: String, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier,
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -261,7 +264,10 @@ private fun ResponseCard(title: String, text: String, modifier: Modifier = Modif
             Text(
                 text = text.ifEmpty { "(пустой ответ)" },
                 style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp).verticalScroll(rememberScrollState()),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp)
+                    .verticalScroll(rememberScrollState()),
                 lineHeight = 22.sp
             )
         }
