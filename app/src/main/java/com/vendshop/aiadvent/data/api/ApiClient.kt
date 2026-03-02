@@ -12,7 +12,7 @@ object ApiClient {
     private const val API_KEY = BuildConfig.DEEPSEEK_API_KEY
 
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.BODY
+        level = HttpLoggingInterceptor.Level.HEADERS
     }
 
     private val okHttpClient = OkHttpClient.Builder()

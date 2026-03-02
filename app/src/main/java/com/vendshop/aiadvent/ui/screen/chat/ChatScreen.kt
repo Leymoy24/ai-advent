@@ -125,7 +125,7 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                     when {
                         uiState.error != null -> {
                             Text(
-                                text = "Ошибка: ${uiState.error}",
+                                text = uiState.error!!,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.fillMaxWidth()
