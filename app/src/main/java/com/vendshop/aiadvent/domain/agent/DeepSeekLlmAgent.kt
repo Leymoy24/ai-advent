@@ -29,9 +29,13 @@ class DeepSeekLlmAgent : LlmAgent {
         Завершай ответ маркером ---
     """.trimIndent()
 
-    override suspend fun process(userRequest: String, config: AgentConfig): AgentResult {
+    override suspend fun process(
+        userRequest: String,
+        config: AgentConfig,
+        history: List<Message>
+    ): AgentResult {
         return try {
-            val text = processStream(userRequest, config)
+            val text = processStream(userRequest, config, history)
                 .fold("") { acc, chunk -> acc + chunk }
             AgentResult.Success(text)
         } catch (e: CancellationException) {
@@ -41,8 +45,12 @@ class DeepSeekLlmAgent : LlmAgent {
         }
     }
 
-    override fun processStream(userRequest: String, config: AgentConfig): Flow<String> = flow {
-        val request = buildRequest(userRequest, config.withRestrictions)
+    override fun processStream(
+        userRequest: String,
+        config: AgentConfig,
+        history: List<Message>
+    ): Flow<String> = flow {
+        val request = buildRequest(userRequest, config.withRestrictions, history)
         val response = ApiClient.deepSeekApi.chatCompletionStream(
             authorization = ApiClient.getAuthHeader(),
             request = request
@@ -64,14 +72,15 @@ class DeepSeekLlmAgent : LlmAgent {
         }
     }.flowOn(Dispatchers.IO)
 
-    private fun buildRequest(userMessage: String, withRestrictions: Boolean): ChatRequest {
-        val messages = if (withRestrictions) {
-            listOf(
-                Message(role = "system", content = formatInstruction),
-                Message(role = "user", content = userMessage)
-            )
-        } else {
-            listOf(Message(role = "user", content = userMessage))
+    private fun buildRequest(
+        userMessage: String,
+        withRestrictions: Boolean,
+        history: List<Message>
+    ): ChatRequest {
+        val messages = buildList {
+            if (withRestrictions) add(Message(role = "system", content = formatInstruction))
+            addAll(history)
+            add(Message(role = "user", content = userMessage))
         }
         return ChatRequest(
             messages = messages,

@@ -1,5 +1,6 @@
 package com.vendshop.aiadvent.domain.agent
 
+import com.vendshop.aiadvent.data.model.Message
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -26,10 +27,18 @@ interface LlmAgent {
     /**
      * Отправляет запрос в LLM и возвращает полный ответ (non-streaming).
      */
-    suspend fun process(userRequest: String, config: AgentConfig = AgentConfig()): AgentResult
+    suspend fun process(
+        userRequest: String,
+        config: AgentConfig = AgentConfig(),
+        history: List<Message> = emptyList()
+    ): AgentResult
 
     /**
      * Отправляет запрос в LLM и эмитит куски текста по мере поступления (streaming).
      */
-    fun processStream(userRequest: String, config: AgentConfig = AgentConfig()): Flow<String>
+    fun processStream(
+        userRequest: String,
+        config: AgentConfig = AgentConfig(),
+        history: List<Message> = emptyList()
+    ): Flow<String>
 }

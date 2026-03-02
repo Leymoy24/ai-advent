@@ -1,6 +1,5 @@
 package com.vendshop.aiadvent.ui.screen.chat
 
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,17 +8,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.outlined.QuestionAnswer
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -30,31 +28,58 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.vendshop.aiadvent.data.model.Message
+import com.vendshop.aiadvent.ui.theme.AIAdventTheme
 
 @Composable
 fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
     var userInput by remember { mutableStateOf("") }
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    ChatScreenContent(
+        uiState = uiState,
+        userInput = userInput,
+        onUserInputChange = { userInput = it },
+        onSend = {
+            viewModel.sendMessage(userInput, SendMode.NORMAL)
+            userInput = ""
+        }
+    )
+}
+
+@Immutable
+private data class ChatMessageUi(
+    val role: String,
+    val content: String
+)
+
+@Composable
+private fun ChatScreenContent(
+    uiState: ChatUiState,
+    userInput: String,
+    onUserInputChange: (String) -> Unit,
+    onSend: () -> Unit
+) {
     val isBusy = uiState.isLoading || uiState.comparisonInProgress
+    val lazyListState = rememberLazyListState()
+
+    val visibleMessages = remember(uiState.messages) {
+        uiState.messages.map { ChatMessageUi(role = it.role, content = it.content) }
+    }
 
     Column(
         modifier = Modifier
@@ -62,21 +87,18 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        // Верхняя часть: область ответа на весь экран (не перекрывая карточку ввода)
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 16.dp)
         ) {
-            val hasResponse = uiState.response.isNotEmpty() ||
-                    uiState.responseUnrestricted != null ||
-                    uiState.responseRestricted != null ||
-                    uiState.error != null ||
-                    isBusy
+            val hasContent = visibleMessages.isNotEmpty() ||
+                uiState.streamingContent.isNotEmpty() ||
+                uiState.error != null ||
+                isBusy
 
-            if (!hasResponse) {
-                // Пустое состояние: иконка и "Чем могу помочь?"
+            if (!hasContent) {
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -96,91 +118,41 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                     )
                 }
             } else {
-                // Прокручиваемая область с ответом (и при сравнении — два блока)
-                val scrollState = rememberScrollState()
-                LaunchedEffect(
-                    uiState.response,
-                    uiState.responseUnrestricted,
-                    uiState.responseRestricted
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    state = lazyListState,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    scrollState.animateScrollTo(scrollState.maxValue)
-                }
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(scrollState)
-                ) {
-                    // Заголовок — вопрос пользователя
-                    if (uiState.lastUserQuestion.isNotEmpty()) {
-                        Text(
-                            text = uiState.lastUserQuestion,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 12.dp)
-                        )
-                    }
-                    when {
-                        uiState.error != null -> {
+                    if (uiState.error != null) {
+                        item(key = "error") {
                             Text(
-                                text = uiState.error!!,
+                                text = uiState.error,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
+                    }
 
-                        uiState.responseUnrestricted != null || uiState.responseRestricted != null -> {
-                            if (uiState.responseUnrestricted != null) {
-                                ResponseCard(
-                                    title = "Без ограничений",
-                                    text = uiState.responseUnrestricted!!,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                            }
-                            if (uiState.responseRestricted != null) {
-                                ResponseCard(
-                                    title = "С ограничениями (формат, max_tokens=150, stop=\"---\")",
-                                    text = uiState.responseRestricted!!,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                            }
-                            if (uiState.comparisonInProgress) {
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = MaterialTheme.shapes.large,
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceContainer
-                                    )
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(16.dp),
-                                        horizontalArrangement = Arrangement.Center,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                                        Spacer(modifier = Modifier.size(12.dp))
-                                        Text(
-                                            "Загружаем второй ответ...",
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                    itemsIndexed(
+                        items = visibleMessages,
+                        key = { index, _ -> "msg_$index" }
+                    ) { _, msg ->
+                        ChatBubble(
+                            role = msg.role,
+                            text = msg.content,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
 
-                        else -> {
-                            Text(
-                                text = uiState.response,
-                                style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier.fillMaxWidth(),
-                                lineHeight = 24.sp
+                    if (uiState.streamingContent.isNotEmpty() || uiState.isLoading) {
+                        item(key = "streaming") {
+                            ChatBubble(
+                                role = "assistant",
+                                text = uiState.streamingContent,
+                                modifier = Modifier.fillMaxWidth()
                             )
-                            if (uiState.isLoading) {
+                            if (uiState.isLoading && uiState.streamingContent.isEmpty()) {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(16.dp),
@@ -194,7 +166,6 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
             }
         }
 
-        // Нижняя часть: поле ввода
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -203,7 +174,7 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
         ) {
             OutlinedTextField(
                 value = userInput,
-                onValueChange = { userInput = it },
+                onValueChange = onUserInputChange,
                 modifier = Modifier.weight(1f),
                 placeholder = {
                     Text(
@@ -224,14 +195,11 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                 trailingIcon = {
                     if (userInput.isNotBlank()) {
                         IconButton(
-                            onClick = {
-                                viewModel.sendMessage(userInput, SendMode.NORMAL)
-                                userInput = ""
-                            },
+                            onClick = onSend,
                             enabled = !isBusy
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.Send,
+                                imageVector = Icons.AutoMirrored.Filled.Send,
                                 contentDescription = "Отправить",
                                 tint = MaterialTheme.colorScheme.primary
                             )
@@ -240,6 +208,89 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
                 }
             )
         }
+    }
+}
+
+@Composable
+private fun ChatBubble(
+    role: String,
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    val isUser = role == "user"
+    Row(
+        modifier = modifier,
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(0.88f),
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(
+                containerColor = if (isUser) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainer
+                }
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Text(
+                    text = if (isUser) "Вы" else "Ассистент",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isUser) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                Text(
+                    text = text.ifEmpty { if (isUser) "(пустое сообщение)" else "(ожидаем ответ)" },
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (isUser) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    lineHeight = 22.sp
+                )
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun ChatScreenPreview_Empty() {
+    AIAdventTheme(dynamicColor = false) {
+        ChatScreenContent(
+            uiState = ChatUiState(),
+            userInput = "",
+            onUserInputChange = {},
+            onSend = {}
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun ChatScreenPreview_WithHistory() {
+    AIAdventTheme(dynamicColor = false) {
+        ChatScreenContent(
+            uiState = ChatUiState(
+                messages = listOf(
+                    Message(role = "user", content = "Привет! Запомни: меня зовут Дима."),
+                    Message(role = "assistant", content = "Привет, Дима! Запомнил.")
+                ),
+                streamingContent = "Конечно, Дима. Чем помочь?"
+            ),
+            userInput = "Как меня зовут?",
+            onUserInputChange = {},
+            onSend = {}
+        )
     }
 }
 
